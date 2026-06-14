@@ -457,6 +457,134 @@ export const initAlphabetEngine = (hintItems: readonly HintItem[]): void => {
 }
 }
 
+/**
+ * Deterministic ("stable") hint-label assignment, behind the `stableHintLabels` option.
+ *
+ * The default {@link initAlphabetEngine} assigns the label pool to elements purely by
+ * their index in the discovery order, so any change to the page (a link added/removed,
+ * a DOM reorder, dynamic content) shifts every label. The helpers below derive each
+ * element's label from a hash of stable element features, so the same element on the
+ * same page keeps (best-effort) the same label across visits.
+ *
+ * `hash32` and `stableFingerprint` are pure and side-effect free (unit-testable in
+ * isolation). Only the alphabet (non-filter) mode is covered in this first iteration.
+ */
+
+/** 32-bit FNV-1a hash. Deterministic, dependency-free. Returns an unsigned 32-bit int. */
+export const hash32 = (str: string): number => {
+  let h = 2166136261; // FNV offset basis
+  for (let i = 0, n = str.length; i < n; i++) {
+    h ^= str.charCodeAt(i) & 0xff;
+    if (str.charCodeAt(i) > 0xff) { h ^= (str.charCodeAt(i) >>> 8) & 0xff; }
+    // FNV prime 16777619, kept in 32-bit via Math.imul
+    h = math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** Normalize a link href to its stable part (origin + pathname), dropping volatile query/hash. */
+const normalizeHref_ = (raw: string): string => {
+  const q = raw.indexOf("?"), hsh = raw.indexOf("#");
+  let end = raw.length;
+  if (q >= 0) { end = q; }
+  if (hsh >= 0 && hsh < end) { end = hsh; }
+  return raw.slice(0, end);
+}
+
+/**
+ * Build a stable, low-volatility fingerprint string for an element. Avoids rect/position
+ * (changes with scroll/responsive layout) and runtime-generated class names (often
+ * bundler-hashed, hence unstable). Order of features is fixed.
+ */
+export const stableFingerprint = (el: SafeHTMLElement): string => {
+  const parts: string[] = [htmlTag_(el)];
+  const id = el.id;
+  if (id) { parts.push("#" + id); }
+  const href = attr_s(el, "href");
+  if (href) { parts.push("@" + normalizeHref_(href)); }
+  for (let k = 0, attrs = ["name", "type", "role", ALA]; k < attrs.length; k++) {
+    const v = attr_s(el, attrs[k]);
+    if (v) { parts.push(attrs[k][0] + ":" + v); }
+  }
+  let text = textContent_s(el);
+  if (text) {
+    text = Lower(text).replace(<RegExpG> /\s+/g, " ").trim().slice(0, 32);
+    if (text) { parts.push("t:" + text); }
+  }
+  // lightweight DOM path: up to 4 ancestors, tag + nth-of-type among same-tag siblings.
+  let node: Element | null = el, depth = 0;
+  let path = "";
+  while (node && depth++ < 4) {
+    const parent: Element | null = node.parentElement;
+    if (!parent) { break; }
+    const tag = htmlTag_(node as SafeElement) || node.localName;
+    let nth = 0, sib: Element | null = node;
+    while ((sib = sib.previousElementSibling)) {
+      if ((htmlTag_(sib as SafeElement) || sib.localName) === tag) { nth++; }
+    }
+    path = tag + nth + ">" + path;
+    node = parent;
+  }
+  parts.push("p:" + path);
+  return parts.join("|");
+}
+
+/**
+ * Like {@link initAlphabetEngine}, but assigns the (identical) label pool to elements by
+ * hashing a stable fingerprint, with deterministic linear probing on collision, instead
+ * of by discovery index. Falls back to index assignment for any element left without a
+ * slot (should not happen, since pool length === count).
+ */
+export const initAlphabetEngineStable = (hintItems: readonly HintItem[]): void => {
+  const step = hintChars.length, chars2 = " " + hintChars,
+  count = hintItems.length, start = (math.ceil((count - 1) / (step - 1)) | 0) || 1,
+  bitStep = math.ceil(OnChrome && Build.MinCVer < BrowserVer.MinEnsured$Math$$log2
+        ? math.log(step + 1) / math.LN2 : math.log2(step + 1)) | 0;
+  let hints: number[] = [0], next = 1, bitOffset = 0;
+  for (let offset = 0, hint = 0; offset < start; ) {
+    if (next === offset) { next = next * step + 1, bitOffset += bitStep; }
+    hint = hints[offset++];
+    for (let ch = 1; ch <= step; ch++) { hints.push((ch << bitOffset) | hint); }
+  }
+  maxPrefixLen_ = (bitOffset / bitStep - +(next > start)) | 0;
+  while (next-- > start) { hints[next] <<= bitStep; }
+  hints = hints.slice(start, start + count).sort((i, j) => i - j);
+  const poolLen = hints.length;
+  // Build the printable label string for each pool slot once.
+  const labels: string[] = [];
+  for (let i = 0, mask = (1 << bitStep) - 1; i < poolLen; i++) {
+    let hintString = "", num = hints[i];
+    if (!(num & mask)) { num >>= bitStep; }
+    for (; num; num >>>= bitStep) { hintString += chars2[num & mask]; }
+    labels.push(hintString);
+  }
+  // Order of assignment between colliding elements is decided by the fingerprint itself
+  // (stable tie-break), NOT by DOM discovery index.
+  const order: { fp: string; idx: number }[] = [];
+  for (let i = 0; i < count; i++) {
+    order.push({ fp: stableFingerprint(hintItems[i].d as SafeHTMLElement), idx: i });
+  }
+  order.sort((a, b) => (a.fp < b.fp ? -1 : a.fp > b.fp ? 1 : a.idx - b.idx));
+  const taken: (string | undefined)[] = new Array(poolLen);
+  for (let k = 0; k < order.length; k++) {
+    const fp = order[k].fp, item = hintItems[order[k].idx];
+    let slot = poolLen ? hash32(fp) % poolLen : 0, probes = 0;
+    while (probes < poolLen && taken[slot] !== undefined) { slot = (slot + 1) % poolLen; probes++; }
+    if (probes >= poolLen) {
+      item.a = labels[order[k].idx] || ""; // fallback: index-based
+      continue;
+    }
+    taken[slot] = fp;
+    const hintString = labels[slot];
+    item.a = hintString;
+    if (!Build.NDEBUG) {
+      if (hintString >= kChar.minNotNum || hintString < "0") {
+        (hintItems as any)[hintString.toLowerCase()] = item;
+      }
+    }
+  }
+}
+
 export const matchHintsByKey = (keyStatus: KeyStatus
     , event: HandlerNS.Event, key: string, keybody: kChar): HintItem | 0 | 2 => {
   let doesDetectMatchSingle: 0 | 1 | 2 = 0, isSpace = keybody === SPC, isTab = keybody === kChar.tab
