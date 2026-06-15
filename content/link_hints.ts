@@ -116,7 +116,7 @@ import {
   ClickType, initTestRegExps, excludeHints
 } from "./local_links"
 import {
-  matchHintsByKey, zIndexes_, rotate1, initFilterEngine, initAlphabetEngine, renderMarkers, generateHintText,
+  matchHintsByKey, zIndexes_, rotate1, initFilterEngine, initAlphabetEngine, initAlphabetEngineStable, renderMarkers, generateHintText,
   getMatchingHints, activeHint_, hintFilterReset, set_maxPrefixLen_, set_zIndexes_, adjustMarkers_old_cr_edge,
   createHint
 } from "./hint_filters"
@@ -139,6 +139,7 @@ let tooHigh_: null | BOOL = 0
 let isClickListened_ = true
 let chars_ = ""
 let useFilter_: boolean
+let stableHints_: boolean
 let keyStatus_: KeyStatus
   /** must be called from a manager, required by {@link #delayToExecute_ } */
 let onTailEnter: ((this: unknown, event: HandlerNS.Event, key: string, keybody: kChar) => void) | null | undefined
@@ -248,7 +249,7 @@ export const activate = (options: ContentOptions, count: number, force?: 2 | Tim
     }
     noHUD_ = !(useFilter || topFrameInfo.v[3] > 40 && topFrameInfo.v[2] > 320) || options.hideHUD ? 1 : 0
     useFilter ? /*#__NOINLINE__*/ initFilterEngine(allHints as readonly FilteredHintItem[])
-        : initAlphabetEngine(allHints)
+        : stableHints_ ? initAlphabetEngineStable(allHints) : initAlphabetEngine(allHints)
     renderMarkers(allHints)
     coreHints.h = -getTime()
     for (const frame of frameArray) {
@@ -271,6 +272,7 @@ const collectFrameHints = (options: ContentOptions, count: number
     }
     chars_ = chars;
     useFilter_ = useFilter
+    stableHints_ = !useFilter && !!options.stableHints
     if (!isHTML_()) {
       return;
     }
@@ -823,7 +825,7 @@ const onFrameUnload = (officer: HintOfficer): void => {
       getMatchingHints(keyStatus_, "", "", 1)
     } else {
       hints_!.forEach(hint => { hint.m.innerText = "" })
-      initAlphabetEngine(hints_!)
+      stableHints_ ? initAlphabetEngineStable(hints_!) : initAlphabetEngine(hints_!)
       renderMarkers(hints_!)
     }
 }

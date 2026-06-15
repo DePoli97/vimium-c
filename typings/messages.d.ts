@@ -294,6 +294,9 @@ declare namespace HintsNS {
     else?: object | string | null | void | false
     ordinal?: boolean
     useFilter?: boolean;
+    /** assign deterministic ("stable") hint labels by hashing each element's features,
+     * so the same element keeps the same label across visits (alphabet mode only) */
+    stableHints?: boolean;
     onTop?: boolean | "host-re##fake-selector;..." | null
     url?: boolean;
     // access el.dataset[<json keys>] || el.attrs[key][json keys]
