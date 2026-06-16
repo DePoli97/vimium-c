@@ -512,18 +512,18 @@ export const stableFingerprint = (el: SafeHTMLElement): string => {
     if (text) { parts.push("t:" + text); }
   }
   // lightweight DOM path: up to 4 ancestors, tag + nth-of-type among same-tag siblings.
-  let node: Element | null = el, depth = 0;
+  let node: SafeElement | null = el, depth = 0;
   let path = "";
   while (node && depth++ < 4) {
-    const parent: Element | null = node.parentElement;
+    const parent = node.parentElement as Exclude<Element["parentElement"], Window>;
     if (!parent) { break; }
-    const tag = htmlTag_(node as SafeElement) || node.localName;
+    const tag = htmlTag_(node);
     let nth = 0, sib: Element | null = node;
-    while ((sib = sib.previousElementSibling)) {
-      if ((htmlTag_(sib as SafeElement) || sib.localName) === tag) { nth++; }
+    while ((sib = sib.previousElementSibling as Exclude<Element["previousElementSibling"], Window | RadioNodeList>)) {
+      if (htmlTag_(sib as SafeElement) === tag) { nth++; }
     }
     path = tag + nth + ">" + path;
-    node = parent;
+    node = parent as SafeElement;
   }
   parts.push("p:" + path);
   return parts.join("|");
