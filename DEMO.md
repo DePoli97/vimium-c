@@ -1,4 +1,4 @@
-# DEMO — Hint label deterministici (stableHints) per Vimium C
+# DEMO - Hint label deterministici (stableHints) per Vimium C
 
 Branch: `feat/deterministic-hints` sul fork `DePoli97/vimium-c`.
 Questa guida ti fa buildare l'estensione sul tuo Mac, caricarla in Chrome e
